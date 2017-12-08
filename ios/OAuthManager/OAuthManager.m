@@ -298,89 +298,91 @@ RCT_EXPORT_METHOD(authorize:(NSString *)providerName
                   opts:(NSDictionary *) opts
                   callback:(RCTResponseSenderBlock)callback)
 {
-    OAuthManager *manager = [OAuthManager sharedManager];
-    [manager clearPending];
-    NSMutableDictionary *cfg = [[manager getConfigForProvider:providerName] mutableCopy];
-    
-    DCTAuthAccount *existingAccount = [manager accountForProvider:providerName];
-    NSString *clientID = ((DCTOAuth2Credential *) existingAccount).clientID;
-    if (([providerName isEqualToString:@"google"] && existingAccount && clientID != nil)
-        || (![providerName isEqualToString:@"google"] && existingAccount != nil)) {
-        if ([existingAccount isAuthorized]) {
-            NSDictionary *accountResponse = [manager getAccountResponse:existingAccount cfg:cfg];
-            callback(@[[NSNull null], @{
-                           @"status": @"ok",
-                           @"provider": providerName,
-                           @"response": accountResponse
-                           }]);
-            return;
-        } else {
-            DCTAuthAccountStore *store = [manager accountStore];
-            [store deleteAccount:existingAccount];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        OAuthManager *manager = [OAuthManager sharedManager];
+        [manager clearPending];
+        NSMutableDictionary *cfg = [[manager getConfigForProvider:providerName] mutableCopy];
+        
+        DCTAuthAccount *existingAccount = [manager accountForProvider:providerName];
+        NSString *clientID = ((DCTOAuth2Credential *) existingAccount).clientID;
+        if (([providerName isEqualToString:@"google"] && existingAccount && clientID != nil)
+            || (![providerName isEqualToString:@"google"] && existingAccount != nil)) {
+            if ([existingAccount isAuthorized]) {
+                NSDictionary *accountResponse = [manager getAccountResponse:existingAccount cfg:cfg];
+                callback(@[[NSNull null], @{
+                            @"status": @"ok",
+                            @"provider": providerName,
+                            @"response": accountResponse
+                            }]);
+                return;
+            } else {
+                DCTAuthAccountStore *store = [manager accountStore];
+                [store deleteAccount:existingAccount];
+            }
         }
-    }
-    
-    NSString *callbackUrl;
-    NSURL *storedCallbackUrl = [cfg objectForKey:@"callback_url"];
-    
-    if (storedCallbackUrl != nil) {
-        callbackUrl = [storedCallbackUrl absoluteString];
-    } else {
-        NSString *appName = [cfg valueForKey:@"app_name"];
-        callbackUrl = [NSString
-                       stringWithFormat:@"%@://oauth-response/%@",
-                       appName,
-                       providerName];
-    }
-    
-    NSString *version = [cfg valueForKey:@"auth_version"];
-    [cfg addEntriesFromDictionary:opts];
-    
-    OAuthClient *client;
-    
-    if ([version isEqualToString:@"1.0"]) {
-        // OAuth 1
-        client = (OAuthClient *)[[OAuth1Client alloc] init];
-    } else if ([version isEqualToString:@"2.0"]) {
-        client = (OAuthClient *)[[OAuth2Client alloc] init];
-    } else {
-        return callback(@[@{
-                              @"status": @"error",
-                              @"msg": @"Unknown provider"
-                              }]);
-    }
-    
-    // Store pending client
-    
-    [manager addPending:client];
-    _pendingAuthentication = YES;
+        
+        NSString *callbackUrl;
+        NSURL *storedCallbackUrl = [cfg objectForKey:@"callback_url"];
+        
+        if (storedCallbackUrl != nil) {
+            callbackUrl = [storedCallbackUrl absoluteString];
+        } else {
+            NSString *appName = [cfg valueForKey:@"app_name"];
+            callbackUrl = [NSString
+                        stringWithFormat:@"%@://oauth-response/%@",
+                        appName,
+                        providerName];
+        }
+        
+        NSString *version = [cfg valueForKey:@"auth_version"];
+        [cfg addEntriesFromDictionary:opts];
+        
+        OAuthClient *client;
+        
+        if ([version isEqualToString:@"1.0"]) {
+            // OAuth 1
+            client = (OAuthClient *)[[OAuth1Client alloc] init];
+        } else if ([version isEqualToString:@"2.0"]) {
+            client = (OAuthClient *)[[OAuth2Client alloc] init];
+        } else {
+            return callback(@[@{
+                                @"status": @"error",
+                                @"msg": @"Unknown provider"
+                                }]);
+        }
+        
+        // Store pending client
+        
+        [manager addPending:client];
+        _pendingAuthentication = YES;
 
-    NSLog(@"Calling authorizeWithUrl: %@ with callbackURL: %@\n %@", providerName, callbackUrl, cfg);
-    
-    [client authorizeWithUrl:providerName
-                         url:callbackUrl
-                         cfg:cfg
-                   onSuccess:^(DCTAuthAccount *account) {
-                      NSLog(@"on success called with account: %@", account);
-                       NSDictionary *accountResponse = [manager getAccountResponse:account cfg:cfg];
-                       _pendingAuthentication = NO;
-                       [manager removePending:client];
-                       [[manager accountStore] saveAccount:account]; // <~
-                       
-                       callback(@[[NSNull null], @{
-                                      @"status": @"ok",
-                                      @"response": accountResponse
-                                      }]);
-                   } onError:^(NSError *error) {
-                       NSLog(@"Error in authorizeWithUrl: %@", error);
-                       _pendingAuthentication = NO;
-                       callback(@[@{
-                                      @"status": @"error",
-                                      @"msg": [error localizedDescription],
-                                      @"userInfo": error.userInfo
-                                      }]);
-                       [manager removePending:client];
-                   }];
+        NSLog(@"Calling authorizeWithUrl: %@ with callbackURL: %@\n %@", providerName, callbackUrl, cfg);
+        
+        [client authorizeWithUrl:providerName
+                            url:callbackUrl
+                            cfg:cfg
+                    onSuccess:^(DCTAuthAccount *account) {
+                        NSLog(@"on success called with account: %@", account);
+                        NSDictionary *accountResponse = [manager getAccountResponse:account cfg:cfg];
+                        _pendingAuthentication = NO;
+                        [manager removePending:client];
+                        [[manager accountStore] saveAccount:account]; // <~
+                        
+                        callback(@[[NSNull null], @{
+                                        @"status": @"ok",
+                                        @"response": accountResponse
+                                        }]);
+                    } onError:^(NSError *error) {
+                        NSLog(@"Error in authorizeWithUrl: %@", error);
+                        _pendingAuthentication = NO;
+                        callback(@[@{
+                                        @"status": @"error",
+                                        @"msg": [error localizedDescription],
+                                        @"userInfo": error.userInfo
+                                        }]);
+                        [manager removePending:client];
+                    }];
+    });
 }
 
 RCT_EXPORT_METHOD(makeRequest:(NSString *)providerName
